@@ -1,0 +1,7 @@
+# Never commit secrets or virtual env
+.streamlit/secrets.toml
+venv/
+__pycache__/
+*.pyc
+.env
+.agents/
