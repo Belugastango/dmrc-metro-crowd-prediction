@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
+from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -11,7 +13,7 @@ warnings.filterwarnings('ignore')
 # TomTom integration
 try:
     from tomtom_traffic import TomTomTraffic
-    TOMTOM_KEY = st.secrets.get("tomtom", {}).get("api_key", "")
+    TOMTOM_KEY = st.secrets.get("tomtom", {}).get("api_key", "") or os.getenv("TOMTOM_API_KEY", "")
     tt_client  = TomTomTraffic(TOMTOM_KEY) if TOMTOM_KEY else None
 except Exception:
     tt_client  = None
@@ -135,9 +137,17 @@ section[data-testid="stSidebar"] {
 
 # ── Data Loading ─────────────────────────────────────────────────────────────
 HOURS = [f'HR{h}' for h in [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0]]
-DATA_FILE = '/Users/mayankkumar/Downloads/DMRC/stationwise_hourly_entry_exit_february_2024.xlsx'
-LOC_FILE  = '/Users/mayankkumar/Downloads/DMRC/dmrc_station_and_gate_locations.xlsx'
-LOAD_FILE = '/Users/mayankkumar/Downloads/DMRC/delhimetropassengersloadperkm.xlsx'
+BASE_DIR = Path(__file__).resolve().parent
+
+def resolve_data_file(env_var, default_name):
+    env_path = os.getenv(env_var, "").strip()
+    if env_path:
+        return Path(env_path)
+    return BASE_DIR / default_name
+
+DATA_FILE = resolve_data_file('DMRC_DATA_FILE', 'stationwise_hourly_entry_exit_february_2024.xlsx')
+LOC_FILE  = resolve_data_file('DMRC_LOC_FILE', 'dmrc_station_and_gate_locations.xlsx')
+LOAD_FILE = resolve_data_file('DMRC_LOAD_FILE', 'delhimetropassengersloadperkm.xlsx')
 
 SHEET_PAIRS = [
     ('september_2024_entry',  'september_2024_exit',  'Sep 2024'),
@@ -162,6 +172,12 @@ LINE_COLORS = {
 
 @st.cache_data(show_spinner=True)
 def load_all_data():
+    missing = [str(p) for p in [DATA_FILE, LOC_FILE, LOAD_FILE] if not p.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Missing required data file(s): " + ", ".join(missing)
+        )
+
     xl   = pd.ExcelFile(DATA_FILE)
     locs = pd.read_excel(LOC_FILE, sheet_name='stations')
     load = pd.read_excel(LOAD_FILE)
@@ -212,6 +228,12 @@ def load_all_data():
         )
         all_dfs.append(merged)
 
+    if not all_dfs:
+        raise ValueError(
+            "No valid entry/exit sheet pairs found in the main workbook. "
+            "Please verify expected sheet names are present."
+        )
+
     full = pd.concat(all_dfs, ignore_index=True)
     full['businessday'] = pd.to_datetime(full['businessday'], errors='coerce')
     full['entry'] = pd.to_numeric(full['entry'], errors='coerce').fillna(0)
@@ -261,7 +283,12 @@ def train_model(data):
 
 # ── Load Data ────────────────────────────────────────────────────────────────
 with st.spinner("⚡ Loading DMRC data..."):
-    data, locs, load_data = load_all_data()
+    try:
+        data, locs, load_data = load_all_data()
+    except (FileNotFoundError, ValueError) as err:
+        st.error("Unable to load DMRC datasets.")
+        st.info(str(err))
+        st.stop()
 
 all_stations = sorted(data['station name'].dropna().unique())
 all_lines    = sorted(data['linename'].dropna().unique())
@@ -971,7 +998,7 @@ elif page == "🚦 Live Traffic":
     st.caption("Real-time congestion from TomTom Traffic API · Correlated with metro crowd prediction.")
 
     if not tt_client:
-        st.error("TomTom API key not found in `.streamlit/secrets.toml`.")
+        st.error("TomTom API key not found. Set tomtom.api_key in Streamlit secrets or TOMTOM_API_KEY as an environment variable.")
         st.stop()
 
     # Station selector

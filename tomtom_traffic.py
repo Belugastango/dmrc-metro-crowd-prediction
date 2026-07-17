@@ -29,7 +29,9 @@ TIMEOUT   = 8   # seconds
 
 class TomTomTraffic:
     def __init__(self, api_key: str):
-        self.api_key = api_key
+        self.api_key = (api_key or "").strip()
+        if not self.api_key:
+            raise ValueError("TomTom API key is required")
 
     # ── 1. Flow Segment Data ────────────────────────────────────────────────
     def flow_at_station(self, lat: float, lon: float) -> dict:
